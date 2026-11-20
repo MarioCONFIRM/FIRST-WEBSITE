@@ -108,35 +108,52 @@ enum SupportTicketPriority {
   URGENT
 }
 
+/// Phase 006A — financial ledger foundation (additive, no conflict with legacy enums).
+enum FinancialJournalStatus {
+  DRAFT
+  POSTED
+  REVERSED
+}
+
+/// Phase 006A — financial transaction lifecycle for the ledger foundation.
+enum FinancialTransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REJECTED
+  CANCELLED
+}
+
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
 
 /// Customer or administrator. Password hashes only — never plain text.
 model User {
-  id                  String        @id @default(uuid()) @db.Char(36)
-  firstName           String        @db.VarChar(100)
-  lastName            String        @db.VarChar(100)
-  middleName          String?       @db.VarChar(100)
+  id                 String        @id @default(uuid()) @db.Char(36)
+  firstName          String        @db.VarChar(100)
+  lastName           String        @db.VarChar(100)
+  middleName         String?       @db.VarChar(100)
   /// 191 chars keeps the unique index within MySQL's utf8mb4 key limit.
-  email               String        @unique @db.VarChar(191)
+  email              String        @unique @db.VarChar(191)
   /// MySQL permits multiple NULLs in a unique index, so "unique where provided".
-  phoneNumber         String?       @unique @db.VarChar(32)
-  passwordHash        String        @db.VarChar(255)
-  dateOfBirth         DateTime?     @db.Date
-  profileImage        String?       @db.VarChar(500)
+  phoneNumber        String?       @unique @db.VarChar(32)
+  passwordHash       String        @db.VarChar(255)
+  dateOfBirth        DateTime?     @db.Date
+  profileImage       String?       @db.VarChar(500)
   /// ISO 3166-1 alpha-2 country code.
-  country             String        @db.Char(2)
-  residentialAddress  String?       @db.Text
-  role                Role          @default(CUSTOMER)
-  emailVerified       Boolean       @default(false)
-  emailVerifiedAt     DateTime?
-  phoneVerified       Boolean       @default(false)
-  termsAcceptedAt     DateTime?
-  kycStatus           KycStatus     @default(NOT_STARTED)
-  accountStatus       AccountStatus @default(ACTIVE)
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  country            String        @db.Char(2)
+  residentialAddress String?       @db.Text
+  role               Role          @default(CUSTOMER)
+  emailVerified      Boolean       @default(false)
+  emailVerifiedAt    DateTime?
+  phoneVerified      Boolean       @default(false)
+  termsAcceptedAt    DateTime?
+  kycStatus          KycStatus     @default(NOT_STARTED)
+  accountStatus      AccountStatus @default(ACTIVE)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   accounts                BankAccount[]
   notifications           Notification[]
@@ -148,6 +165,11 @@ model User {
   sessions                Session[]
   emailVerificationTokens EmailVerificationToken[]
   passwordResetTokens     PasswordResetToken[]
+
+  // Phase 006A — financial ledger foundation (additive relations)
+  createdFinancialJournals FinancialJournal[]     @relation("FinancialJournalCreator")
+  financialTransactions    FinancialTransaction[] @relation("FinancialTransactionCustomer")
+  financialAuditActions    FinancialAuditLog[]    @relation("FinancialAuditActor")
 
   @@index([role])
   @@index([accountStatus])
@@ -167,35 +189,44 @@ model Currency {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  accounts               BankAccount[]
-  transactions           Transaction[]
-  ledgerEntries          LedgerEntry[]
-  baseExchangeRates      ExchangeRate[] @relation("BaseCurrency")
-  quoteExchangeRates     ExchangeRate[] @relation("QuoteCurrency")
+  accounts           BankAccount[]
+  transactions       Transaction[]
+  ledgerEntries      LedgerEntry[]
+  baseExchangeRates  ExchangeRate[] @relation("BaseCurrency")
+  quoteExchangeRates ExchangeRate[] @relation("QuoteCurrency")
+
+  // Phase 006A — financial ledger foundation (additive relations)
+  financialJournals      FinancialJournal[]
+  financialLedgerEntries FinancialLedgerEntry[]
+  financialTransactions  FinancialTransaction[]
 
   @@map("currencies")
 }
 
 /// Customer account. Balances are snapshots; the ledger is the source of truth.
 model BankAccount {
-  id                String        @id @default(uuid()) @db.Char(36)
-  userId            String        @db.Char(36)
-  user              User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  id               String        @id @default(uuid()) @db.Char(36)
+  userId           String        @db.Char(36)
+  user             User          @relation(fields: [userId], references: [id], onDelete: Restrict)
   /// Unique account numbers are generated in a later phase.
-  accountNumber     String        @unique @db.VarChar(34)
-  accountName       String        @db.VarChar(150)
-  accountType       AccountType
-  currencyCode      String        @db.Char(3)
-  currency          Currency      @relation(fields: [currencyCode], references: [code], onDelete: Restrict)
-  availableBalance  Decimal       @default(0) @db.Decimal(19, 4)
-  ledgerBalance     Decimal       @default(0) @db.Decimal(19, 4)
-  status            AccountStatus @default(ACTIVE)
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  accountNumber    String        @unique @db.VarChar(34)
+  accountName      String        @db.VarChar(150)
+  accountType      AccountType
+  currencyCode     String        @db.Char(3)
+  currency         Currency      @relation(fields: [currencyCode], references: [code], onDelete: Restrict)
+  availableBalance Decimal       @default(0) @db.Decimal(19, 4)
+  ledgerBalance    Decimal       @default(0) @db.Decimal(19, 4)
+  status           AccountStatus @default(ACTIVE)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
-  ledgerEntries          LedgerEntry[]
-  sourceTransactions     Transaction[] @relation("SourceAccount")
+  ledgerEntries           LedgerEntry[]
+  sourceTransactions      Transaction[] @relation("SourceAccount")
   destinationTransactions Transaction[] @relation("DestinationAccount")
+
+  // Phase 006A — financial ledger foundation (additive relations)
+  financialLedgerEntries FinancialLedgerEntry[]
+  financialTransactions  FinancialTransaction[]
 
   @@index([userId])
   @@index([currencyCode])
@@ -290,16 +321,16 @@ model Notification {
 
 /// Stores a reference only. Document binaries belong in secure object storage.
 model KycDocument {
-  id                 String            @id @default(uuid()) @db.Char(36)
-  userId             String            @db.Char(36)
-  user               User              @relation("KycSubmitter", fields: [userId], references: [id], onDelete: Restrict)
-  documentType       KycDocumentType
-  documentReference  String            @db.VarChar(255)
-  documentStatus     KycDocumentStatus @default(PENDING)
-  submittedAt        DateTime          @default(now())
-  reviewedAt         DateTime?
-  reviewedBy         String?           @db.Char(36)
-  reviewer           User?             @relation("KycReviewer", fields: [reviewedBy], references: [id], onDelete: Restrict)
+  id                String            @id @default(uuid()) @db.Char(36)
+  userId            String            @db.Char(36)
+  user              User              @relation("KycSubmitter", fields: [userId], references: [id], onDelete: Restrict)
+  documentType      KycDocumentType
+  documentReference String            @db.VarChar(255)
+  documentStatus    KycDocumentStatus @default(PENDING)
+  submittedAt       DateTime          @default(now())
+  reviewedAt        DateTime?
+  reviewedBy        String?           @db.Char(36)
+  reviewer          User?             @relation("KycReviewer", fields: [reviewedBy], references: [id], onDelete: Restrict)
 
   @@index([userId])
   @@index([documentStatus])
@@ -397,17 +428,125 @@ model PasswordResetToken {
 
 /// DB-backed throttling record for login, verification resend and password reset.
 model AuthThrottle {
-  id          String   @id @default(uuid()) @db.Char(36)
+  id           String    @id @default(uuid()) @db.Char(36)
   /// Composite identifier (e.g. login:ip:..., login:email:..., reset:email:...).
-  key         String   @db.VarChar(191)
-  windowStart DateTime
-  count       Int      @default(0)
+  key          String    @db.VarChar(191)
+  windowStart  DateTime
+  count        Int       @default(0)
   blockedUntil DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@unique([key, windowStart])
   @@index([key])
   @@index([blockedUntil])
   @@map("auth_throttles")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 006A â€” Financial ledger architecture and transaction foundation (additive)
+// ---------------------------------------------------------------------------
+// Accounting convention: Customer bank accounts are treated as liability accounts
+// from the institution's perspective. For posted ledger entries, CREDIT increases
+// and DEBIT decreases the account's posted ledger balance for the entry currency.
+// Posted balance = sum(CREDIT) - sum(DEBIT) over POSTED journals only.
+// Monetary precision/scale: DECIMAL(19,4) for all journal/entry/transaction amounts.
+// ---------------------------------------------------------------------------
+
+/// Double-entry financial journal. A posted journal is balanced and immutable in
+/// effect; corrections are made via separate compensating reversal journals.
+model FinancialJournal {
+  id               String                 @id @default(uuid()) @db.Char(36)
+  journalReference String                 @unique @db.VarChar(64)
+  transactionType  TransactionType
+  status           FinancialJournalStatus @default(DRAFT)
+  description      String                 @db.Text
+  currencyCode     String                 @db.Char(3)
+  currency         Currency               @relation(fields: [currencyCode], references: [code], onDelete: Restrict)
+  totalDebit       Decimal                @default(0) @db.Decimal(19, 4)
+  totalCredit      Decimal                @default(0) @db.Decimal(19, 4)
+  createdAt        DateTime               @default(now())
+  postedAt         DateTime?
+  createdByUserId  String                 @db.Char(36)
+  createdBy        User                   @relation("FinancialJournalCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  auditMetadata    Json?
+
+  entries              FinancialLedgerEntry[]
+  financialTransaction FinancialTransaction?  @relation("FinancialTransactionJournal")
+
+  @@index([status])
+  @@index([currencyCode])
+  @@index([createdByUserId])
+  @@index([createdAt])
+  @@index([transactionType])
+  @@map("financial_journals")
+}
+
+/// Immutable ledger posting belonging to a financial journal. Posted-history
+/// corrections must use a separate compensating journal, never edits/deletes.
+model FinancialLedgerEntry {
+  id           String           @id @default(uuid()) @db.Char(36)
+  journalId    String           @db.Char(36)
+  journal      FinancialJournal @relation(fields: [journalId], references: [id], onDelete: Restrict)
+  accountId    String           @db.Char(36)
+  account      BankAccount      @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  entryType    EntryType
+  amount       Decimal          @db.Decimal(19, 4)
+  currencyCode String           @db.Char(3)
+  currency     Currency         @relation(fields: [currencyCode], references: [code], onDelete: Restrict)
+  createdAt    DateTime         @default(now())
+
+  @@index([journalId])
+  @@index([accountId])
+  @@index([currencyCode])
+  @@index([accountId, currencyCode])
+  @@map("financial_ledger_entries")
+}
+
+/// Financial transaction record for the ledger foundation. Links optional
+/// customer/account context, journal, and idempotency control.
+model FinancialTransaction {
+  id                   String                     @id @default(uuid()) @db.Char(36)
+  transactionReference String                     @unique @db.VarChar(64)
+  transactionType      TransactionType
+  transactionStatus    FinancialTransactionStatus @default(PENDING)
+  currencyCode         String                     @db.Char(3)
+  currency             Currency                   @relation(fields: [currencyCode], references: [code], onDelete: Restrict)
+  amount               Decimal                    @db.Decimal(19, 4)
+  customerId           String?                    @db.Char(36)
+  customer             User?                      @relation("FinancialTransactionCustomer", fields: [customerId], references: [id], onDelete: Restrict)
+  accountId            String?                    @db.Char(36)
+  account              BankAccount?               @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  journalId            String?                    @unique @db.Char(36)
+  journal              FinancialJournal?          @relation("FinancialTransactionJournal", fields: [journalId], references: [id], onDelete: Restrict)
+  /// DB unique constraint enforces idempotency for provided keys (MySQL allows multiple NULLs).
+  idempotencyKey       String?                    @unique @db.VarChar(191)
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+
+  @@index([transactionStatus])
+  @@index([transactionType])
+  @@index([currencyCode])
+  @@index([customerId])
+  @@index([accountId])
+  @@index([createdAt])
+  @@map("financial_transactions")
+}
+
+/// Append-only audit trail for financial ledger foundation actions.
+model FinancialAuditLog {
+  id              String   @id @default(uuid()) @db.Char(36)
+  actorUserId     String?  @db.Char(36)
+  actorUser       User?    @relation("FinancialAuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  action          String   @db.VarChar(120)
+  affectedEntity  String   @db.VarChar(120)
+  entityReference String   @db.VarChar(191)
+  createdAt       DateTime @default(now())
+  metadata        Json?
+
+  @@index([createdAt])
+  @@index([actorUserId])
+  @@index([affectedEntity, entityReference])
+  @@index([action])
+  @@map("financial_audit_logs")
 }
