@@ -1,0 +1,413 @@
+// Veltrix Bank — Phase 002 database architecture.
+//
+// Engine: MySQL 8.4 (local WAMP). Adapted from the PostgreSQL specification
+// agreed for this phase: MySQL has no native UUID type, so all identifiers use
+// CHAR(36) with Prisma-generated UUID v4 values. Monetary values use DECIMAL.
+//
+// Scope: database structure only. No authentication, transaction execution,
+// account generation or admin functionality is implemented here.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum KycStatus {
+  NOT_STARTED
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum AccountStatus {
+  ACTIVE
+  FROZEN
+  SUSPENDED
+  CLOSED
+}
+
+enum AccountType {
+  SAVINGS
+  CURRENT
+  BUSINESS
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER
+  CURRENCY_CONVERSION
+  FEE
+  REVERSAL
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum EntryType {
+  DEBIT
+  CREDIT
+}
+
+enum NotificationType {
+  INFO
+  SECURITY
+  ACCOUNT
+  TRANSACTION
+  SYSTEM
+}
+
+enum KycDocumentType {
+  PASSPORT
+  NATIONAL_ID
+  DRIVING_LICENSE
+  PROOF_OF_ADDRESS
+  OTHER
+}
+
+enum KycDocumentStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+/// Customer or administrator. Password hashes only — never plain text.
+model User {
+  id                  String        @id @default(uuid()) @db.Char(36)
+  firstName           String        @db.VarChar(100)
+  lastName            String        @db.VarChar(100)
+  middleName          String?       @db.VarChar(100)
+  /// 191 chars keeps the unique index within MySQL's utf8mb4 key limit.
+  email               String        @unique @db.VarChar(191)
+  /// MySQL permits multiple NULLs in a unique index, so "unique where provided".
+  phoneNumber         String?       @unique @db.VarChar(32)
+  passwordHash        String        @db.VarChar(255)
+  dateOfBirth         DateTime?     @db.Date
+  profileImage        String?       @db.VarChar(500)
+  /// ISO 3166-1 alpha-2 country code.
+  country             String        @db.Char(2)
+  residentialAddress  String?       @db.Text
+  role                Role          @default(CUSTOMER)
+  emailVerified       Boolean       @default(false)
+  emailVerifiedAt     DateTime?
+  phoneVerified       Boolean       @default(false)
+  termsAcceptedAt     DateTime?
+  kycStatus           KycStatus     @default(NOT_STARTED)
+  accountStatus       AccountStatus @default(ACTIVE)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  accounts                BankAccount[]
+  notifications           Notification[]
+  submittedKycDocuments   KycDocument[]            @relation("KycSubmitter")
+  reviewedKycDocuments    KycDocument[]            @relation("KycReviewer")
+  supportTickets          SupportTicket[]
+  initiatedTransactions   Transaction[]            @relation("TransactionInitiator")
+  auditActions            AuditLog[]               @relation("AuditActor")
+  sessions                Session[]
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+
+  @@index([role])
+  @@index([accountStatus])
+  @@index([kycStatus])
+  @@map("users")
+}
+
+/// Currency reference data. Exchange rates are deliberately not stored here.
+model Currency {
+  id            String   @id @default(uuid()) @db.Char(36)
+  /// ISO 4217 code.
+  code          String   @unique @db.Char(3)
+  name          String   @db.VarChar(100)
+  symbol        String   @db.VarChar(10)
+  isActive      Boolean  @default(true)
+  decimalPlaces Int      @default(2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  accounts               BankAccount[]
+  transactions           Transaction[]
+  ledgerEntries          LedgerEntry[]
+  baseExchangeRates      ExchangeRate[] @relation("BaseCurrency")
+  quoteExchangeRates     ExchangeRate[] @relation("QuoteCurrency")
+
+  @@map("currencies")
+}
+
+/// Customer account. Balances are snapshots; the ledger is the source of truth.
+model BankAccount {
+  id                String        @id @default(uuid()) @db.Char(36)
+  userId            String        @db.Char(36)
+  user              User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  /// Unique account numbers are generated in a later phase.
+  accountNumber     String        @unique @db.VarChar(34)
+  accountName       String        @db.VarChar(150)
+  accountType       AccountType
+  currencyCode      String        @db.Char(3)
+  currency          Currency      @relation(fields: [currencyCode], references: [code], onDelete: Restrict)
+  availableBalance  Decimal       @default(0) @db.Decimal(19, 4)
+  ledgerBalance     Decimal       @default(0) @db.Decimal(19, 4)
+  status            AccountStatus @default(ACTIVE)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  ledgerEntries          LedgerEntry[]
+  sourceTransactions     Transaction[] @relation("SourceAccount")
+  destinationTransactions Transaction[] @relation("DestinationAccount")
+
+  @@index([userId])
+  @@index([currencyCode])
+  @@index([status])
+  @@map("bank_accounts")
+}
+
+/// Financial event record. Execution logic is a later phase.
+model Transaction {
+  id                   String            @id @default(uuid()) @db.Char(36)
+  reference            String            @unique @db.VarChar(64)
+  transactionType      TransactionType
+  status               TransactionStatus @default(PENDING)
+  description          String            @db.Text
+  amount               Decimal           @db.Decimal(19, 4)
+  currencyCode         String            @db.Char(3)
+  currency             Currency          @relation(fields: [currencyCode], references: [code], onDelete: Restrict)
+  sourceAccountId      String?           @db.Char(36)
+  sourceAccount        BankAccount?      @relation("SourceAccount", fields: [sourceAccountId], references: [id], onDelete: Restrict)
+  destinationAccountId String?           @db.Char(36)
+  destinationAccount   BankAccount?      @relation("DestinationAccount", fields: [destinationAccountId], references: [id], onDelete: Restrict)
+  initiatedByUserId    String            @db.Char(36)
+  initiatedBy          User              @relation("TransactionInitiator", fields: [initiatedByUserId], references: [id], onDelete: Restrict)
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  completedAt          DateTime?
+
+  ledgerEntries LedgerEntry[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([sourceAccountId])
+  @@index([destinationAccountId])
+  @@index([currencyCode])
+  @@index([initiatedByUserId])
+  @@map("transactions")
+}
+
+/// Immutable double-entry posting. Corrections use reversal entries.
+model LedgerEntry {
+  id            String      @id @default(uuid()) @db.Char(36)
+  transactionId String      @db.Char(36)
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  accountId     String      @db.Char(36)
+  account       BankAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  entryType     EntryType
+  amount        Decimal     @db.Decimal(19, 4)
+  currencyCode  String      @db.Char(3)
+  currency      Currency    @relation(fields: [currencyCode], references: [code], onDelete: Restrict)
+  description   String      @db.Text
+  createdAt     DateTime    @default(now())
+
+  @@index([accountId])
+  @@index([transactionId])
+  @@index([currencyCode])
+  @@map("ledger_entries")
+}
+
+/// Append-only historical rates. A rate is never overwritten in place.
+model ExchangeRate {
+  id                String   @id @default(uuid()) @db.Char(36)
+  baseCurrencyCode  String   @db.Char(3)
+  /// RESTRICT on update keeps currency codes stable while rates reference them.
+  baseCurrency      Currency @relation("BaseCurrency", fields: [baseCurrencyCode], references: [code], onDelete: Restrict, onUpdate: Restrict)
+  quoteCurrencyCode String   @db.Char(3)
+  quoteCurrency     Currency @relation("QuoteCurrency", fields: [quoteCurrencyCode], references: [code], onDelete: Restrict, onUpdate: Restrict)
+  exchangeRate      Decimal  @db.Decimal(20, 10)
+  effectiveAt       DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([baseCurrencyCode, quoteCurrencyCode, effectiveAt])
+  @@index([baseCurrencyCode, quoteCurrencyCode, effectiveAt])
+  /// Required as the leftmost index for the quote-currency foreign key.
+  @@index([quoteCurrencyCode])
+  @@map("exchange_rates")
+}
+
+model Notification {
+  id               String           @id @default(uuid()) @db.Char(36)
+  userId           String           @db.Char(36)
+  user             User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  title            String           @db.VarChar(200)
+  message          String           @db.Text
+  notificationType NotificationType @default(INFO)
+  isRead           Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+
+  @@index([userId])
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+/// Stores a reference only. Document binaries belong in secure object storage.
+model KycDocument {
+  id                 String            @id @default(uuid()) @db.Char(36)
+  userId             String            @db.Char(36)
+  user               User              @relation("KycSubmitter", fields: [userId], references: [id], onDelete: Restrict)
+  documentType       KycDocumentType
+  documentReference  String            @db.VarChar(255)
+  documentStatus     KycDocumentStatus @default(PENDING)
+  submittedAt        DateTime          @default(now())
+  reviewedAt         DateTime?
+  reviewedBy         String?           @db.Char(36)
+  reviewer           User?             @relation("KycReviewer", fields: [reviewedBy], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([documentStatus])
+  /// Required as the leftmost index for the optional reviewer foreign key.
+  @@index([reviewedBy])
+  @@map("kyc_documents")
+}
+
+/// Append-only administrative and financial audit trail.
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Char(36)
+  actorUserId    String?  @db.Char(36)
+  actorUser      User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  action         String   @db.VarChar(120)
+  entityType     String   @db.VarChar(120)
+  entityId       String   @db.Char(36)
+  previousValues Json?
+  newValues      Json?
+  ipAddress      String?  @db.VarChar(45)
+  userAgent      String?  @db.VarChar(512)
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorUserId])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+model SupportTicket {
+  id        String                @id @default(uuid()) @db.Char(36)
+  userId    String                @db.Char(36)
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  subject   String                @db.VarChar(200)
+  message   String                @db.Text
+  status    SupportTicketStatus   @default(OPEN)
+  priority  SupportTicketPriority @default(MEDIUM)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@map("support_tickets")
+}
+
+/// Server-side authenticated session. Only hashed tokens are stored.
+model Session {
+  id         String    @id @default(uuid()) @db.Char(36)
+  userId     String    @db.Char(36)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  /// SHA-256 hash of the opaque session token sent in the cookie.
+  tokenHash  String    @unique @db.Char(64)
+  expiresAt  DateTime
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  ipAddress  String?   @db.VarChar(45)
+  userAgent  String?   @db.VarChar(512)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([userId, revokedAt])
+  @@map("sessions")
+}
+
+/// Single-use email verification token. Only hashed tokens are stored.
+model EmailVerificationToken {
+  id         String    @id @default(uuid()) @db.Char(36)
+  userId     String    @db.Char(36)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  tokenHash  String    @unique @db.Char(64)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("email_verification_tokens")
+}
+
+/// Single-use password reset token. Only hashed tokens are stored.
+model PasswordResetToken {
+  id         String    @id @default(uuid()) @db.Char(36)
+  userId     String    @db.Char(36)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  tokenHash  String    @unique @db.Char(64)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+/// DB-backed throttling record for login, verification resend and password reset.
+model AuthThrottle {
+  id          String   @id @default(uuid()) @db.Char(36)
+  /// Composite identifier (e.g. login:ip:..., login:email:..., reset:email:...).
+  key         String   @db.VarChar(191)
+  windowStart DateTime
+  count       Int      @default(0)
+  blockedUntil DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([key, windowStart])
+  @@index([key])
+  @@index([blockedUntil])
+  @@map("auth_throttles")
+}

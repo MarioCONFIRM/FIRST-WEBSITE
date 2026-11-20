@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+  --color-veltrix-navy: #071b33;
+  --color-veltrix-blue: #1456a0;
+  --color-veltrix-gold: #c6a45c;
+  --color-veltrix-surface: #f4f6f9;
+  --color-veltrix-silver: #dce2ea;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+::selection {
+  background-color: #1456a0;
+  color: #ffffff;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

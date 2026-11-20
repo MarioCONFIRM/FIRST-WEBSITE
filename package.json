@@ -1,0 +1,62 @@
+{
+  "name": "veltrix-bank",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:status": "prisma migrate status",
+    "db:seed": "prisma db seed",
+    "db:check": "prisma db execute --file scripts/db-check.sql",
+    "admin:bootstrap": "tsx scripts/bootstrap-admin.ts",
+    "phase004-runtime-validate": "tsx scripts/phase004-runtime-validate.ts"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.2.2",
+    "@prisma/adapter-mariadb": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "dotenv": "^18.0.10",
+    "next": "16.4.6",
+    "nodemailer": "^10.6.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "^0.0.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "4.3.3",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^26.6.6",
+    "@types/nodemailer": "^8.0.2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.3.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.6",
+    "jsdom": "^31.0.1",
+    "playwright": "^1.58.2",
+    "prisma": "^7.10.1",
+    "tailwindcss": "4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^5.1.1"
+  },
+  "allowScripts": {
+    "prisma@7.10.1": true,
+    "@prisma/engines@7.10.1": true,
+    "esbuild@0.28.2": true
+  },
+  "overrides": {
+    "effect": "3.22.5"
+  }
+}
